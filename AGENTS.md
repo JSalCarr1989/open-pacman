@@ -22,4 +22,5 @@ This repo exists to practice spec-driven development (see `README.md`). New feat
 
 - Specs live in `specs/NN-slug.md` (two-digit zero-padded number, kebab-case slug) and follow `.agents/skills/spec/template.md`: header (Status / Depends on / Date / one-sentence Objective), scope with explicit out-of-scope, data model, implementation plan, boolean acceptance criteria, decisions.
 - New specs are `Draft` until the user marks them `Approved` — never auto-approve.
-- `.agents/skills/spec/` is installed skill content pinned by `skills-lock.json`; don't edit it as project code.
+- Approved specs are implemented with the `spec-impl` skill: it refuses anything not in `Approved` state, works on a `spec-NN-slug` git branch (auto-created unless `AutoCreateBranch: false` in `specs/.spec-config.yml`), implements one plan step at a time with diff review, and never commits on its own.
+- `.agents/skills/` is installed skill content pinned by `skills-lock.json` (`spec` + `spec-impl`); don't edit it as project code. Install/update via `npx skills`, not by hand.
