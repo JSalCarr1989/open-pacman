@@ -144,7 +144,14 @@ function ghostTarget( game, g ) {
     return { x: 2 * pivX - Math.round( blinky.x ), y: 2 * pivY - Math.round( blinky.y ) };
   }
 
-  // Blinky (y Clyde todavia, paso 5): directo a Pac-Man.
+  if ( g.kind === 'clyde' ) {
+    // Clyde persigue solo a mas de 8 celdas; si no, se retira a su esquina.
+    const dist = Math.abs( px - Math.round( g.x ) ) + Math.abs( py - Math.round( g.y ) );
+    if ( dist > 8 ) return { x: px, y: py };
+    return g.corner;
+  }
+
+  // Blinky: directo a Pac-Man.
   return { x: px, y: py };
 }
 
