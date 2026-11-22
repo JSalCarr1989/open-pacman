@@ -122,12 +122,30 @@ function movePacman( game ) {
 }
 
 // Celda a la que apunta el fantasma segun el modo actual.
-// En scatter va a su esquina; en chase al objetivo de su personalidad.
+// En scatter va a su esquina; en chase a su personalidad del arcade.
 function ghostTarget( game, g ) {
   if ( game.mode === 'scatter' ) return g.corner;
-  // Chase (provisorio): todos apuntan a Pac-Man.
-  // Pasos 4/5 del plan afinan a Pinky, Inky y Clyde.
-  return { x: Math.round( game.pacman.x ), y: Math.round( game.pacman.y ) };
+
+  const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+  const d = DIRS[ p.dir ];
+
+  if ( g.kind === 'pinky' ) {
+    // 4 celdas delante de la direccion actual de Pac-Man.
+    return { x: px + d.x * 4, y: py + d.y * 4 };
+  }
+
+  if ( g.kind === 'inky' ) {
+    // Pivote 2 celdas delante de Pac-Man; vector doblado desde Blinky.
+    const blinky = game.ghosts.find( ( gh ) => gh.kind === 'blinky' );
+    const pivX = px + d.x * 2;
+    const pivY = py + d.y * 2;
+    return { x: 2 * pivX - Math.round( blinky.x ), y: 2 * pivY - Math.round( blinky.y ) };
+  }
+
+  // Blinky (y Clyde todavia, paso 5): directo a Pac-Man.
+  return { x: px, y: py };
 }
 
 function decideGhost( game, g ) {
