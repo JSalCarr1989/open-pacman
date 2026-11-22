@@ -39,9 +39,14 @@ function createGame() {
     ghosts: GHOST_STARTS.map( ( g ) => ( {
       x: g.x,
       y: g.y,
-      dir: 'up',
+      // Blinky arranca fuera de la pen, mirando a la izquierda.
+      dir: g.kind === 'blinky' ? 'left' : 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      corner: g.corner,
+      // En la pen hasta que venza su exitDelay (Blinky no tiene retardo).
+      inPen: g.exitDelay !== undefined,
+      exitDelay: g.exitDelay !== undefined ? g.exitDelay : null,
     } ) ),
   };
 }
@@ -145,6 +150,16 @@ function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
 
+  // Fantasma en la pen: espera su retardo y luego sale en linea hacia fuera.
+  if ( g.inPen ) {
+    if ( g.exitDelay > 0 ) {
+      g.exitDelay--;
+      return;
+    }
+    exitPen( game, g );
+    return;
+  }
+
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
@@ -158,16 +173,46 @@ function moveGhost( game, g ) {
   wrapTunnel( g, width );
 }
 
+const PEN_EXIT_ROW = 11; // fila encima de la puerta (fuera de la pen)
+
+// Salida escalonada de la pen: primero a la columna de salida (13/14),
+// luego sube por la puerta hasta la fila 11 y queda libre para la IA.
+function exitPen( game, g ) {
+  const grid = game.grid;
+  const exitCol = g.x <= 13 ? 13 : 14;
+
+  if ( aligned( g.x ) && aligned( g.y ) ) {
+    g.x = Math.round( g.x );
+    g.y = Math.round( g.y );
+    if ( g.x !== exitCol ) g.dir = g.x < exitCol ? 'right' : 'left';
+    else g.dir = 'up';
+    // Ya en la columna y en la fila de salida: pasa a IA normal.
+    if ( g.x === exitCol && g.y === PEN_EXIT_ROW ) {
+      g.inPen = false;
+      return;
+    }
+    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+  }
+
+  const d = DIRS[ g.dir ];
+  g.x += d.x * g.speed;
+  g.y += d.y * g.speed;
+}
+
 function resetPositions( game ) {
   const p = game.pacman;
   p.x = PACMAN_START.x;
   p.y = PACMAN_START.y;
   p.dir = 'left';
   p.nextDir = null;
+  // Restaura posiciones, retardos de salida y estado de pen de cada fantasma.
   game.ghosts.forEach( ( g, i ) => {
-    g.x = GHOST_STARTS[ i ].x;
-    g.y = GHOST_STARTS[ i ].y;
-    g.dir = 'up';
+    const s = GHOST_STARTS[ i ];
+    g.x = s.x;
+    g.y = s.y;
+    g.dir = s.kind === 'blinky' ? 'left' : 'up';
+    g.inPen = s.exitDelay !== undefined;
+    g.exitDelay = s.exitDelay !== undefined ? s.exitDelay : null;
   } );
 }
 
