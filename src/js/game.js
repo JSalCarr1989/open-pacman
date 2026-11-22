@@ -13,6 +13,9 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 
+// Tabla scatter/chase del nivel 1, en segundos (scatter, chase, scatter, ...)
+const MODE_TIMINGS = [ 7, 20, 7, 20, 5, 20, 5, Infinity ];
+
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
 function createGame() {
@@ -29,6 +32,9 @@ function createGame() {
     lives: 3,
     dotsRemaining: dots,
     grid,
+    mode: 'scatter',
+    modeIndex: 0,
+    modeFrames: 0,
     pacman: {
       x: PACMAN_START.x,
       y: PACMAN_START.y,
@@ -39,9 +45,14 @@ function createGame() {
     ghosts: GHOST_STARTS.map( ( g ) => ( {
       x: g.x,
       y: g.y,
-      dir: 'up',
+      // Blinky arranca fuera de la pen, mirando a la izquierda.
+      dir: g.kind === 'blinky' ? 'left' : 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      corner: g.corner,
+      // En la pen hasta que venza su exitDelay (Blinky no tiene retardo).
+      inPen: g.exitDelay !== undefined,
+      exitDelay: g.exitDelay !== undefined ? g.exitDelay : null,
     } ) ),
   };
 }
@@ -110,9 +121,43 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Celda a la que apunta el fantasma segun el modo actual.
+// En scatter va a su esquina; en chase a su personalidad del arcade.
+function ghostTarget( game, g ) {
+  if ( game.mode === 'scatter' ) return g.corner;
+
+  const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+  const d = DIRS[ p.dir ];
+
+  if ( g.kind === 'pinky' ) {
+    // 4 celdas delante de la direccion actual de Pac-Man.
+    return { x: px + d.x * 4, y: py + d.y * 4 };
+  }
+
+  if ( g.kind === 'inky' ) {
+    // Pivote 2 celdas delante de Pac-Man; vector doblado desde Blinky.
+    const blinky = game.ghosts.find( ( gh ) => gh.kind === 'blinky' );
+    const pivX = px + d.x * 2;
+    const pivY = py + d.y * 2;
+    return { x: 2 * pivX - Math.round( blinky.x ), y: 2 * pivY - Math.round( blinky.y ) };
+  }
+
+  if ( g.kind === 'clyde' ) {
+    // Clyde persigue solo a mas de 8 celdas; si no, se retira a su esquina.
+    const dist = Math.abs( px - Math.round( g.x ) ) + Math.abs( py - Math.round( g.y ) );
+    if ( dist > 8 ) return { x: px, y: py };
+    return g.corner;
+  }
+
+  // Blinky: directo a Pac-Man.
+  return { x: px, y: py };
+}
+
 function decideGhost( game, g ) {
   const grid = game.grid;
-  const p = game.pacman;
+  const target = ghostTarget( game, g );
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
@@ -120,30 +165,35 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  // Greedy: elegir la direccion que mas acerca al target (sin reversa).
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const dist = Math.abs( nx - target.x ) + Math.abs( ny - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
   }
+  g.dir = best;
 }
 
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
+
+  // Fantasma en la pen: espera su retardo y luego sale en linea hacia fuera.
+  if ( g.inPen ) {
+    if ( g.exitDelay > 0 ) {
+      g.exitDelay--;
+      return;
+    }
+    exitPen( game, g );
+    return;
+  }
 
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
@@ -158,24 +208,71 @@ function moveGhost( game, g ) {
   wrapTunnel( g, width );
 }
 
+const PEN_EXIT_ROW = 11; // fila encima de la puerta (fuera de la pen)
+
+// Salida escalonada de la pen: primero a la columna de salida (13/14),
+// luego sube por la puerta hasta la fila 11 y queda libre para la IA.
+function exitPen( game, g ) {
+  const grid = game.grid;
+  const exitCol = g.x <= 13 ? 13 : 14;
+
+  if ( aligned( g.x ) && aligned( g.y ) ) {
+    g.x = Math.round( g.x );
+    g.y = Math.round( g.y );
+    if ( g.x !== exitCol ) g.dir = g.x < exitCol ? 'right' : 'left';
+    else g.dir = 'up';
+    // Ya en la columna y en la fila de salida: pasa a IA normal.
+    if ( g.x === exitCol && g.y === PEN_EXIT_ROW ) {
+      g.inPen = false;
+      return;
+    }
+    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+  }
+
+  const d = DIRS[ g.dir ];
+  g.x += d.x * g.speed;
+  g.y += d.y * g.speed;
+}
+
 function resetPositions( game ) {
   const p = game.pacman;
   p.x = PACMAN_START.x;
   p.y = PACMAN_START.y;
   p.dir = 'left';
   p.nextDir = null;
+  // Restaura posiciones, retardos de salida y estado de pen de cada fantasma.
   game.ghosts.forEach( ( g, i ) => {
-    g.x = GHOST_STARTS[ i ].x;
-    g.y = GHOST_STARTS[ i ].y;
-    g.dir = 'up';
+    const s = GHOST_STARTS[ i ];
+    g.x = s.x;
+    g.y = s.y;
+    g.dir = s.kind === 'blinky' ? 'left' : 'up';
+    g.inPen = s.exitDelay !== undefined;
+    g.exitDelay = s.exitDelay !== undefined ? s.exitDelay : null;
   } );
+  // Reinicia el ciclo scatter/chase al perder una vida.
+  game.mode = 'scatter';
+  game.modeIndex = 0;
+  game.modeFrames = 0;
 }
 
 function collides( a, b ) {
   return Math.abs( a.x - b.x ) < 0.5 && Math.abs( a.y - b.y ) < 0.5;
 }
 
+// Ciclo global scatter/chase segun MODE_TIMINGS (segundos -> frames).
+function updateMode( game ) {
+  const limit = MODE_TIMINGS[ game.modeIndex ] * 60;
+  game.modeFrames++;
+  if ( game.modeFrames >= limit ) {
+    game.modeFrames = 0;
+    // La ultima entrada es Infinity: el indice queda ahi (chase eterno).
+    if ( game.modeIndex < MODE_TIMINGS.length - 1 ) game.modeIndex++;
+    game.mode = game.modeIndex % 2 === 0 ? 'scatter' : 'chase';
+  }
+}
+
 function update( game ) {
+  updateMode( game );
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
